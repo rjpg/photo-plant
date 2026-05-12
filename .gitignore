@@ -5,3 +5,10 @@ data/
 camera-captures/
 camera-captures-1080p/
 *.log
+flash-sd-card.txt
+foto.jpeg
+pi-diagnostics.txt
+project-memory.md
+reflash-manual.txt
+setup-bootfs-ssh.txt
+ssh-test.txt
