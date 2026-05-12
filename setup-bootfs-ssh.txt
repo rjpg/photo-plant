@@ -1,0 +1,8 @@
+Comandos para preparar a particao boot do cartao (/dev/sdb1)
+
+sudo mkdir -p /tmp/opencode/bootfs
+sudo mount /dev/sdb1 /tmp/opencode/bootfs
+sudo touch /tmp/opencode/bootfs/ssh
+sudo sh -c 'echo "photoplant:$(echo photoplant | openssl passwd -6 -stdin)" > /tmp/opencode/bootfs/userconf.txt'
+sync
+sudo umount /tmp/opencode/bootfs

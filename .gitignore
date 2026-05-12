@@ -1,0 +1,7 @@
+.venv/
+__pycache__/
+*.pyc
+data/
+camera-captures/
+camera-captures-1080p/
+*.log

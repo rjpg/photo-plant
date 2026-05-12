@@ -1,0 +1,13 @@
+Comandos para entrar no Raspberry por SSH
+
+1. Ligar por SSH:
+ssh photoplant@raspberrypi.local
+
+Password:
+photoplant
+
+2. Depois de entrar, correr estes comandos:
+hostname
+whoami
+uname -a
+cat /etc/os-release

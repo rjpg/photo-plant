@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Photo Plant</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  </head>
+  <body>
+    <main class="page">
+      <header class="hero">
+        <h1>Photo Plant</h1>
+        <p>4-camera capture dashboard</p>
+      </header>
+
+      <form method="post" action="{{ url_for('update_config') }}" class="camera-grid">
+        {% for camera in cameras %}
+        <section class="camera-card">
+          <h2>Camera {{ camera.id }}</h2>
+
+          {% if camera.latest_capture %}
+          <img class="camera-image" src="{{ url_for('serve_capture', prefix=camera.prefix, filename=camera.latest_capture) }}" alt="Latest capture for camera {{ camera.id }}">
+          {% else %}
+          <div class="camera-placeholder">No capture yet</div>
+          {% endif %}
+
+          <label>
+            Prefix
+            <input type="text" name="prefix_{{ camera.id }}" value="{{ camera.prefix }}">
+          </label>
+
+          <label>
+            Interval (minutes)
+            <input type="number" min="1" name="interval_{{ camera.id }}" value="{{ camera.interval_minutes }}">
+          </label>
+
+          <label class="toggle">
+            <input type="checkbox" name="enabled_{{ camera.id }}" {% if camera.enabled %}checked{% endif %}>
+            Enabled
+          </label>
+
+          <div class="meta">Sequence: {{ camera.sequence }}</div>
+
+          <div class="actions">
+            <button type="button" onclick="captureNow({{ camera.id }})">Capture now</button>
+            <button type="button" onclick="togglePreview({{ camera.id }})">Preview</button>
+            <button type="button" onclick="resetSequence({{ camera.id }})">Reset sequence</button>
+          </div>
+
+          <div id="status-{{ camera.id }}" class="status"></div>
+          <img id="preview-{{ camera.id }}" class="camera-image preview" alt="Preview camera {{ camera.id }}" onclick="openPreviewModal({{ camera.id }})">
+        </section>
+        {% endfor %}
+
+        <div class="toolbar">
+          <button type="submit">Save configuration</button>
+        </div>
+      </form>
+
+      <div id="preview-modal" class="preview-modal" hidden>
+        <div class="preview-modal-backdrop" onclick="closePreviewModal()"></div>
+        <section class="preview-modal-panel">
+          <header class="preview-modal-header">
+            <h2 id="preview-modal-title">Camera preview</h2>
+            <div class="preview-modal-actions">
+              <button type="button" onclick="stopPreviewFromModal()">Stop preview</button>
+              <button type="button" onclick="closePreviewModal()">Close</button>
+            </div>
+          </header>
+          <img id="preview-modal-image" class="preview-modal-image" alt="Focused preview">
+          <p class="preview-modal-help">Use this enlarged view to adjust framing and manual focus, then stop the preview.</p>
+        </section>
+      </div>
+    </main>
+
+    <script>
+      let activePreviewCameraId = null
+
+      async function captureNow(cameraId) {
+        const status = document.getElementById(`status-${cameraId}`)
+        status.textContent = 'Capturing...'
+        const response = await fetch(`/capture/${cameraId}`, { method: 'POST' })
+        const payload = await response.json()
+        status.textContent = payload.success ? `Saved ${payload.filename}` : `Error: ${payload.error}`
+        if (payload.success) {
+          window.location.reload()
+        }
+      }
+
+      async function resetSequence(cameraId) {
+        const status = document.getElementById(`status-${cameraId}`)
+        status.textContent = 'Resetting sequence...'
+        const response = await fetch(`/reset-sequence/${cameraId}`, { method: 'POST' })
+        const payload = await response.json()
+        status.textContent = payload.success
+          ? 'Sequence reset to 0. Change prefix if needed before capturing again.'
+          : 'Failed to reset sequence.'
+        if (payload.success) {
+          window.location.reload()
+        }
+      }
+
+      async function previewCamera(cameraId) {
+        const status = document.getElementById(`status-${cameraId}`)
+        const img = document.getElementById(`preview-${cameraId}`)
+        status.textContent = 'Capturing preview...'
+        const response = await fetch(`/preview/${cameraId}`, { method: 'POST' })
+        const payload = await response.json()
+        if (!payload.success) {
+          status.textContent = `Error: ${payload.error}`
+          return
+        }
+        img.src = `/previews/${payload.image}?t=${Date.now()}`
+        img.style.display = 'block'
+        status.textContent = 'Preview updated'
+      }
+
+      function togglePreview(cameraId) {
+        const status = document.getElementById(`status-${cameraId}`)
+        const img = document.getElementById(`preview-${cameraId}`)
+        const active = img.dataset.active === 'true'
+
+        document.querySelectorAll('.preview').forEach(preview => {
+          preview.style.display = 'none'
+          preview.removeAttribute('src')
+          preview.dataset.active = 'false'
+        })
+
+        if (activePreviewCameraId !== null && activePreviewCameraId !== cameraId) {
+          const previousStatus = document.getElementById(`status-${activePreviewCameraId}`)
+          if (previousStatus) {
+            previousStatus.textContent = 'Preview stopped'
+          }
+        }
+
+        if (active) {
+          status.textContent = 'Preview stopped'
+          activePreviewCameraId = null
+          closePreviewModal()
+          return
+        }
+
+        img.src = `/preview-stream/${cameraId}?t=${Date.now()}`
+        img.style.display = 'block'
+        img.dataset.active = 'true'
+        activePreviewCameraId = cameraId
+        status.textContent = 'Continuous preview active'
+      }
+
+      function openPreviewModal(cameraId) {
+        const preview = document.getElementById(`preview-${cameraId}`)
+        if (preview.dataset.active !== 'true') {
+          return
+        }
+
+        const modal = document.getElementById('preview-modal')
+        const modalImage = document.getElementById('preview-modal-image')
+        const modalTitle = document.getElementById('preview-modal-title')
+        modal.hidden = false
+        modalImage.src = preview.src
+        modalTitle.textContent = `Camera ${cameraId} preview`
+      }
+
+      function closePreviewModal() {
+        const modal = document.getElementById('preview-modal')
+        const modalImage = document.getElementById('preview-modal-image')
+        modal.hidden = true
+        modalImage.removeAttribute('src')
+      }
+
+      function stopPreviewFromModal() {
+        if (activePreviewCameraId === null) {
+          closePreviewModal()
+          return
+        }
+
+        togglePreview(activePreviewCameraId)
+      }
+    </script>
+  </body>
+</html>
