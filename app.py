@@ -6,7 +6,6 @@ import threading
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Dict
 
 from flask import Flask, Response, jsonify, redirect, render_template, request, send_from_directory, url_for
 
@@ -46,8 +45,9 @@ def ensure_dirs() -> None:
     PREVIEWS_DIR.mkdir(exist_ok=True)
 
 
-def default_config() -> Dict[str, Dict[str, CameraConfig]]:
+def default_config() -> dict:
     return {
+        "config_revision": 0,
         "cameras": {
             str(camera_id): asdict(CameraConfig(prefix=f"cam{camera_id}")) for camera_id in CAMERA_IDS
         }
@@ -70,6 +70,9 @@ def load_config() -> dict:
         return raw
 
     changed = False
+    if "config_revision" not in raw:
+        raw["config_revision"] = 0
+        changed = True
     raw.setdefault("cameras", {})
     for camera_id in CAMERA_IDS:
         key = str(camera_id)
@@ -100,8 +103,21 @@ def capture_directory(prefix: str) -> Path:
 
 
 def latest_capture_name(prefix: str) -> str | None:
-    files = sorted(capture_directory(prefix).glob("*.jpg"), key=lambda path: path.stat().st_mtime, reverse=True)
-    return files[0].name if files else None
+    files = list(capture_directory(prefix).glob("*.jpg"))
+    if not files:
+        return None
+    return max(files, key=lambda path: path.stat().st_mtime).name
+
+
+def parse_interval_minutes(value: str | int | None) -> int:
+    try:
+        return max(1, int(value or 10))
+    except (TypeError, ValueError):
+        return 10
+
+
+def normalize_capture_resolution(value: str | None) -> str:
+    return value if value in CAPTURE_RESOLUTIONS else DEFAULT_CAPTURE_RESOLUTION
 
 
 def capture_image(camera_id: int, output_path: Path, width: int, height: int) -> subprocess.CompletedProcess:
@@ -192,8 +208,8 @@ def capture_sequence(camera_id: int, config: dict) -> tuple[bool, str | None, st
     camera["sequence"] += 1
     filename = f"{camera['prefix']}_{camera['sequence']:06d}.jpg"
     output_path = capture_directory(camera["prefix"]) / filename
-    resolution = camera.get("capture_resolution", DEFAULT_CAPTURE_RESOLUTION)
-    width, height = CAPTURE_RESOLUTIONS.get(resolution, CAPTURE_RESOLUTIONS[DEFAULT_CAPTURE_RESOLUTION])
+    resolution = normalize_capture_resolution(camera.get("capture_resolution"))
+    width, height = CAPTURE_RESOLUTIONS[resolution]
     result = capture_image(camera_id, output_path, width, height)
     if result.returncode != 0:
         camera["sequence"] -= 1
@@ -268,7 +284,7 @@ def index():
                 "interval_minutes": camera["interval_minutes"],
                 "enabled": camera["enabled"],
                 "sequence": camera["sequence"],
-                "capture_resolution": camera.get("capture_resolution", DEFAULT_CAPTURE_RESOLUTION),
+                "capture_resolution": normalize_capture_resolution(camera.get("capture_resolution")),
                 "latest_capture": latest_capture_name(camera["prefix"]),
             }
         )
@@ -289,11 +305,10 @@ def update_config():
         enabled = request.form.get(f"enabled_{camera_id}") == "on"
         capture_resolution = request.form.get(f"capture_resolution_{camera_id}", DEFAULT_CAPTURE_RESOLUTION)
         config["cameras"][key]["prefix"] = prefix
-        config["cameras"][key]["interval_minutes"] = max(1, int(interval or "10"))
+        config["cameras"][key]["interval_minutes"] = parse_interval_minutes(interval)
         config["cameras"][key]["enabled"] = enabled
-        config["cameras"][key]["capture_resolution"] = (
-            capture_resolution if capture_resolution in CAPTURE_RESOLUTIONS else DEFAULT_CAPTURE_RESOLUTION
-        )
+        config["cameras"][key]["capture_resolution"] = normalize_capture_resolution(capture_resolution)
+    config["config_revision"] = int(config.get("config_revision", 0)) + 1
     save_config(config)
     return redirect(url_for("index"))
 
@@ -352,7 +367,7 @@ def health():
 
 @app.get("/latest-captures")
 def latest_captures():
-    """Return the latest capture info for all cameras"""
+    """Return the latest capture and config info for all cameras"""
     config = load_config()
     captures = {}
     for camera_id in CAMERA_IDS:
@@ -362,8 +377,14 @@ def latest_captures():
             "prefix": camera["prefix"],
             "filename": latest,
             "sequence": camera["sequence"],
+            "enabled": camera["enabled"],
+            "interval_minutes": camera["interval_minutes"],
+            "capture_resolution": normalize_capture_resolution(camera.get("capture_resolution")),
         }
-    return jsonify(captures)
+    return jsonify({
+        "config_revision": int(config.get("config_revision", 0)),
+        "cameras": captures,
+    })
 
 
 if __name__ == "__main__":

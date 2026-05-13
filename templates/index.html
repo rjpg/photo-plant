@@ -12,21 +12,19 @@
       <form method="post" action="{{ url_for('update_config') }}" class="camera-grid">
         {% for camera in cameras %}
         <section class="camera-card" id="camera-{{ camera.id }}-card">
-          <h2>Camera {{ camera.id }}</h2>
-
           {% if camera.latest_capture %}
           <img id="camera-{{ camera.id }}-image" class="camera-image" src="{{ url_for('serve_capture', prefix=camera.prefix, filename=camera.latest_capture) }}" alt="Latest capture for camera {{ camera.id }}" onclick="openCaptureModal({{ camera.id }})">
           {% else %}
           <div id="camera-{{ camera.id }}-placeholder" class="camera-placeholder">No capture yet</div>
           {% endif %}
 
-          <label>
-            Prefix
+          <label class="field-row">
+            <span>Camera {{ camera.id }}</span>
             <input type="text" name="prefix_{{ camera.id }}" value="{{ camera.prefix }}">
           </label>
 
-          <label>
-            Interval (minutes)
+          <label class="field-row">
+            <span>Interval (minutes)</span>
             <input type="number" min="1" name="interval_{{ camera.id }}" value="{{ camera.interval_minutes }}">
           </label>
 
@@ -35,8 +33,8 @@
             Enabled
           </label>
 
-          <label>
-            Capture resolution
+          <label class="field-row">
+            <span>Capture resolution</span>
             <select name="capture_resolution_{{ camera.id }}">
               {% for resolution in capture_resolutions %}
               <option value="{{ resolution }}" {% if camera.capture_resolution == resolution %}selected{% endif %}>{{ resolution }}</option>
@@ -83,6 +81,7 @@
       let modalMode = null
       let modalPreviewCameraId = null
       let lastCaptures = {}
+      let lastConfigRevision = null
 
       function ensureCameraImage(cameraId) {
         let imageEl = document.querySelector(`#camera-${cameraId}-image`)
@@ -108,13 +107,35 @@
       async function pollLatestCaptures() {
         try {
           const response = await fetch('/latest-captures')
-          const captures = await response.json()
+          const payload = await response.json()
+          const captures = payload.cameras
+          const configRevisionChanged = lastConfigRevision !== null && payload.config_revision !== lastConfigRevision
+          lastConfigRevision = payload.config_revision
           
           // Update each camera card if there's a new capture
           for (const cameraId in captures) {
             const data = captures[cameraId]
             const sequenceEl = document.querySelector(`#camera-${cameraId}-sequence`)
             const previous = lastCaptures[cameraId]
+            const prefixInput = document.querySelector(`input[name="prefix_${cameraId}"]`)
+            const intervalInput = document.querySelector(`input[name="interval_${cameraId}"]`)
+            const enabledInput = document.querySelector(`input[name="enabled_${cameraId}"]`)
+            const resolutionInput = document.querySelector(`select[name="capture_resolution_${cameraId}"]`)
+
+            if (configRevisionChanged) {
+              if (prefixInput) {
+                prefixInput.value = data.prefix
+              }
+              if (intervalInput) {
+                intervalInput.value = data.interval_minutes
+              }
+              if (enabledInput) {
+                enabledInput.checked = data.enabled
+              }
+              if (resolutionInput) {
+                resolutionInput.value = data.capture_resolution
+              }
+            }
 
             if (sequenceEl) {
               sequenceEl.textContent = `Sequence: ${data.sequence}`
@@ -201,21 +222,6 @@
         if (payload.success) {
           window.location.reload()
         }
-      }
-
-      async function previewCamera(cameraId) {
-        const status = document.getElementById(`status-${cameraId}`)
-        const img = document.getElementById(`preview-${cameraId}`)
-        status.textContent = 'Capturing preview...'
-        const response = await fetch(`/preview/${cameraId}`, { method: 'POST' })
-        const payload = await response.json()
-        if (!payload.success) {
-          status.textContent = `Error: ${payload.error}`
-          return
-        }
-        img.src = `/previews/${payload.image}?t=${Date.now()}`
-        img.style.display = 'block'
-        status.textContent = 'Preview updated'
       }
 
       function togglePreview(cameraId) {
