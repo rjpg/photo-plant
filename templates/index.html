@@ -78,12 +78,50 @@
 
       async function captureNow(cameraId) {
         const status = document.getElementById(`status-${cameraId}`)
+        status.textContent = 'Saving config...'
+        
+        // Build form data from all cameras
+        const formData = new FormData()
+        document.querySelectorAll('input[name^="prefix_"]').forEach(input => {
+          const id = input.name.match(/\d+/)[0]
+          const prefix = document.querySelector(`input[name="prefix_${id}"]`).value
+          const interval = document.querySelector(`input[name="interval_${id}"]`).value
+          const enabled = document.querySelector(`input[name="enabled_${id}"]`).checked
+          formData.append(`prefix_${id}`, prefix)
+          formData.append(`interval_${id}`, interval)
+          if (enabled) {
+            formData.append(`enabled_${id}`, 'on')
+          }
+        })
+        
+        // Save config first
+        try {
+          const configResponse = await fetch('/config', {
+            method: 'POST',
+            body: formData
+          })
+          if (!configResponse.ok) {
+            status.textContent = 'Error saving config (HTTP ' + configResponse.status + ')'
+            return
+          }
+        } catch (e) {
+          status.textContent = `Config error: ${e.message}`
+          return
+        }
+        
+        // Now capture
         status.textContent = 'Capturing...'
-        const response = await fetch(`/capture/${cameraId}`, { method: 'POST' })
-        const payload = await response.json()
-        status.textContent = payload.success ? `Saved ${payload.filename}` : `Error: ${payload.error}`
-        if (payload.success) {
-          window.location.reload()
+        try {
+          const response = await fetch(`/capture/${cameraId}`, { method: 'POST' })
+          const payload = await response.json()
+          if (payload.success) {
+            status.textContent = `Saved: ${payload.filename}`
+            window.location.reload()
+          } else {
+            status.textContent = `Capture failed: ${payload.error || 'unknown error'}`
+          }
+        } catch (e) {
+          status.textContent = `Capture error: ${e.message}`
         }
       }
 

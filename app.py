@@ -20,8 +20,8 @@ PREVIEWS_DIR = DATA_DIR / "previews"
 CAMERA_IDS = [0, 1, 2, 3]
 CAPTURE_WIDTH = 1920
 CAPTURE_HEIGHT = 1080
-PREVIEW_WIDTH = 1296
-PREVIEW_HEIGHT = 972
+PREVIEW_WIDTH = 960
+PREVIEW_HEIGHT = 720
 
 
 @dataclass
@@ -149,8 +149,11 @@ def capture_sequence(camera_id: int, config: dict) -> tuple[bool, str | None, st
     result = capture_image(camera_id, output_path, CAPTURE_WIDTH, CAPTURE_HEIGHT)
     if result.returncode != 0:
         camera["sequence"] -= 1
-        return False, None, result.stderr or result.stdout
+        error_msg = result.stderr or result.stdout or f"rpicam-still exited with code {result.returncode}"
+        print(f"[ERROR] Camera {camera_id} capture failed: {error_msg}")
+        return False, None, error_msg
     save_config(config)
+    print(f"[OK] Camera {camera_id} captured: {filename}")
     return True, filename, None
 
 
@@ -181,14 +184,22 @@ class CaptureScheduler:
                 camera = config["cameras"][str(camera_id)]
                 if not camera["enabled"]:
                     continue
-                interval_seconds = max(1, int(camera["interval_minutes"])) * 60
+                try:
+                    interval_minutes = max(1, int(camera.get("interval_minutes", 10)))
+                    interval_seconds = interval_minutes * 60
+                except (ValueError, TypeError):
+                    print(f"[WARN] Invalid interval for camera {camera_id}, skipping")
+                    continue
                 last_run = self._last_run.get(camera_id, 0)
                 if now - last_run < interval_seconds:
                     continue
                 with self._lock:
-                    success, _, _ = capture_sequence(camera_id, config)
+                    success, filename, error = capture_sequence(camera_id, config)
                     if success:
                         self._last_run[camera_id] = time.time()
+                        print(f"[SCHEDULER] Camera {camera_id} auto-captured: {filename}")
+                    else:
+                        print(f"[SCHEDULER] Camera {camera_id} failed: {error}")
             self._stop.wait(2)
 
 
@@ -276,4 +287,8 @@ def health():
 
 if __name__ == "__main__":
     ensure_dirs()
-    app.run(host="0.0.0.0", port=5000, debug=False)
+    scheduler.start()
+    try:
+        app.run(host="0.0.0.0", port=5000, debug=False)
+    finally:
+        scheduler.stop()
