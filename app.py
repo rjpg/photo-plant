@@ -100,7 +100,7 @@ def capture_directory(prefix: str) -> Path:
 
 
 def latest_capture_name(prefix: str) -> str | None:
-    files = sorted(capture_directory(prefix).glob("*.jpg"), reverse=True)
+    files = sorted(capture_directory(prefix).glob("*.jpg"), key=lambda path: path.stat().st_mtime, reverse=True)
     return files[0].name if files else None
 
 

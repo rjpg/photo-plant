@@ -7,12 +7,8 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
   </head>
   <body>
+    <button class="reload-button" type="button" onclick="window.location.reload()">Reload</button>
     <main class="page">
-      <header class="hero">
-        <h1>Photo Plant</h1>
-        <p>4-camera capture dashboard</p>
-      </header>
-
       <form method="post" action="{{ url_for('update_config') }}" class="camera-grid">
         {% for camera in cameras %}
         <section class="camera-card" id="camera-{{ camera.id }}-card">
