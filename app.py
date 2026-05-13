@@ -18,10 +18,17 @@ CAPTURES_DIR = DATA_DIR / "captures"
 PREVIEWS_DIR = DATA_DIR / "previews"
 
 CAMERA_IDS = [0, 1, 2, 3]
-CAPTURE_WIDTH = 1920
-CAPTURE_HEIGHT = 1080
-PREVIEW_WIDTH = 960
-PREVIEW_HEIGHT = 720
+CAPTURE_RESOLUTIONS = {
+    "1920x1080": (1920, 1080),
+    "1280x720": (1280, 720),
+    "960x720": (960, 720),
+    "640x480": (640, 480),
+}
+DEFAULT_CAPTURE_RESOLUTION = "1920x1080"
+PREVIEW_CARD_WIDTH = 640
+PREVIEW_CARD_HEIGHT = 480
+PREVIEW_MODAL_WIDTH = 960
+PREVIEW_MODAL_HEIGHT = 720
 
 
 @dataclass
@@ -30,6 +37,7 @@ class CameraConfig:
     interval_minutes: int = 10
     enabled: bool = False
     sequence: int = 0
+    capture_resolution: str = DEFAULT_CAPTURE_RESOLUTION
 
 
 def ensure_dirs() -> None:
@@ -116,29 +124,67 @@ def capture_image(camera_id: int, output_path: Path, width: int, height: int) ->
 
 def capture_preview(camera_id: int) -> tuple[bool, str | None]:
     output_path = PREVIEWS_DIR / f"cam{camera_id}.jpg"
-    result = capture_image(camera_id, output_path, PREVIEW_WIDTH, PREVIEW_HEIGHT)
+    result = capture_image(camera_id, output_path, PREVIEW_CARD_WIDTH, PREVIEW_CARD_HEIGHT)
     if result.returncode != 0:
         return False, result.stderr or result.stdout
     return True, None
 
 
-def preview_stream_frames(camera_id: int):
-    output_path = PREVIEWS_DIR / f"cam{camera_id}.jpg"
-    while True:
-        result = capture_image(camera_id, output_path, PREVIEW_WIDTH, PREVIEW_HEIGHT)
-        if result.returncode == 0 and output_path.exists():
-            frame = output_path.read_bytes()
-            yield (
-                b"--frame\r\n"
-                b"Content-Type: image/jpeg\r\n\r\n" + frame + b"\r\n"
-            )
-        else:
-            error = (result.stderr or result.stdout or "preview error").encode("utf-8", errors="replace")
-            yield (
-                b"--frame\r\n"
-                b"Content-Type: text/plain\r\n\r\n" + error + b"\r\n"
-            )
-        time.sleep(0.7)
+def preview_stream_frames(camera_id: int, width: int, height: int):
+    cmd = [
+        "rpicam-vid",
+        "--camera",
+        str(camera_id),
+        "-n",
+        "-t",
+        "0",
+        "--width",
+        str(width),
+        "--height",
+        str(height),
+        "--codec",
+        "mjpeg",
+        "--output",
+        "-",
+    ]
+    process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    buffer = b""
+
+    try:
+        while True:
+            if process.stdout is None:
+                break
+
+            chunk = process.stdout.read(4096)
+            if not chunk:
+                break
+
+            buffer += chunk
+            while True:
+                start = buffer.find(b"\xff\xd8")
+                if start == -1:
+                    buffer = buffer[-2:]
+                    break
+
+                end = buffer.find(b"\xff\xd9", start + 2)
+                if end == -1:
+                    buffer = buffer[start:]
+                    break
+
+                frame = buffer[start:end + 2]
+                buffer = buffer[end + 2:]
+                yield (
+                    b"--frame\r\n"
+                    b"Content-Type: image/jpeg\r\n\r\n" + frame + b"\r\n"
+                )
+    finally:
+        if process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=2)
 
 
 def capture_sequence(camera_id: int, config: dict) -> tuple[bool, str | None, str | None]:
@@ -146,7 +192,9 @@ def capture_sequence(camera_id: int, config: dict) -> tuple[bool, str | None, st
     camera["sequence"] += 1
     filename = f"{camera['prefix']}_{camera['sequence']:06d}.jpg"
     output_path = capture_directory(camera["prefix"]) / filename
-    result = capture_image(camera_id, output_path, CAPTURE_WIDTH, CAPTURE_HEIGHT)
+    resolution = camera.get("capture_resolution", DEFAULT_CAPTURE_RESOLUTION)
+    width, height = CAPTURE_RESOLUTIONS.get(resolution, CAPTURE_RESOLUTIONS[DEFAULT_CAPTURE_RESOLUTION])
+    result = capture_image(camera_id, output_path, width, height)
     if result.returncode != 0:
         camera["sequence"] -= 1
         error_msg = result.stderr or result.stdout or f"rpicam-still exited with code {result.returncode}"
@@ -220,10 +268,15 @@ def index():
                 "interval_minutes": camera["interval_minutes"],
                 "enabled": camera["enabled"],
                 "sequence": camera["sequence"],
+                "capture_resolution": camera.get("capture_resolution", DEFAULT_CAPTURE_RESOLUTION),
                 "latest_capture": latest_capture_name(camera["prefix"]),
             }
         )
-    return render_template("index.html", cameras=cameras)
+    return render_template(
+        "index.html",
+        cameras=cameras,
+        capture_resolutions=list(CAPTURE_RESOLUTIONS.keys()),
+    )
 
 
 @app.post("/config")
@@ -234,9 +287,13 @@ def update_config():
         prefix = request.form.get(f"prefix_{camera_id}", f"cam{camera_id}").strip() or f"cam{camera_id}"
         interval = request.form.get(f"interval_{camera_id}", "10").strip()
         enabled = request.form.get(f"enabled_{camera_id}") == "on"
+        capture_resolution = request.form.get(f"capture_resolution_{camera_id}", DEFAULT_CAPTURE_RESOLUTION)
         config["cameras"][key]["prefix"] = prefix
         config["cameras"][key]["interval_minutes"] = max(1, int(interval or "10"))
         config["cameras"][key]["enabled"] = enabled
+        config["cameras"][key]["capture_resolution"] = (
+            capture_resolution if capture_resolution in CAPTURE_RESOLUTIONS else DEFAULT_CAPTURE_RESOLUTION
+        )
     save_config(config)
     return redirect(url_for("index"))
 
@@ -264,8 +321,16 @@ def preview(camera_id: int):
 
 @app.get("/preview-stream/<int:camera_id>")
 def preview_stream(camera_id: int):
+    mode = request.args.get("mode", "card")
+    if mode == "modal":
+        width = PREVIEW_MODAL_WIDTH
+        height = PREVIEW_MODAL_HEIGHT
+    else:
+        width = PREVIEW_CARD_WIDTH
+        height = PREVIEW_CARD_HEIGHT
+
     return Response(
-        preview_stream_frames(camera_id),
+        preview_stream_frames(camera_id, width, height),
         mimetype="multipart/x-mixed-replace; boundary=frame",
     )
 

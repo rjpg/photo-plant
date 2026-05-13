@@ -61,11 +61,13 @@ label {
 }
 
 input[type="text"],
-input[type="number"] {
+input[type="number"],
+select {
   padding: 10px;
   border: 1px solid #b8c7b8;
   border-radius: 10px;
   font-size: 14px;
+  background: #ffffff;
 }
 
 .toggle {

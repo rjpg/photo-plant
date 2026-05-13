@@ -39,6 +39,15 @@
             Enabled
           </label>
 
+          <label>
+            Capture resolution
+            <select name="capture_resolution_{{ camera.id }}">
+              {% for resolution in capture_resolutions %}
+              <option value="{{ resolution }}" {% if camera.capture_resolution == resolution %}selected{% endif %}>{{ resolution }}</option>
+              {% endfor %}
+            </select>
+          </label>
+
           <div id="camera-{{ camera.id }}-sequence" class="meta">Sequence: {{ camera.sequence }}</div>
 
           <div class="actions">
@@ -76,6 +85,7 @@
     <script>
       let activePreviewCameraId = null
       let modalMode = null
+      let modalPreviewCameraId = null
       let lastCaptures = {}
 
       function ensureCameraImage(cameraId) {
@@ -144,8 +154,10 @@
           const prefix = document.querySelector(`input[name="prefix_${id}"]`).value
           const interval = document.querySelector(`input[name="interval_${id}"]`).value
           const enabled = document.querySelector(`input[name="enabled_${id}"]`).checked
+          const captureResolution = document.querySelector(`select[name="capture_resolution_${id}"]`).value
           formData.append(`prefix_${id}`, prefix)
           formData.append(`interval_${id}`, interval)
+          formData.append(`capture_resolution_${id}`, captureResolution)
           if (enabled) {
             formData.append(`enabled_${id}`, 'on')
           }
@@ -235,7 +247,7 @@
           return
         }
 
-        img.src = `/preview-stream/${cameraId}?t=${Date.now()}`
+        img.src = `/preview-stream/${cameraId}?mode=card&t=${Date.now()}`
         img.style.display = 'block'
         img.dataset.active = 'true'
         activePreviewCameraId = cameraId
@@ -252,11 +264,13 @@
         const modalImage = document.getElementById('preview-modal-image')
         const modalTitle = document.getElementById('preview-modal-title')
         const stopButton = document.querySelector('.preview-modal-actions button')
+        preview.removeAttribute('src')
         modal.hidden = false
-        modalImage.src = preview.src
+        modalImage.src = `/preview-stream/${cameraId}?mode=modal&t=${Date.now()}`
         modalTitle.textContent = `Camera ${cameraId} preview`
         stopButton.hidden = false
         modalMode = 'preview'
+        modalPreviewCameraId = cameraId
       }
 
       function openCaptureModal(cameraId) {
@@ -279,8 +293,14 @@
       function closePreviewModal() {
         const modal = document.getElementById('preview-modal')
         const modalImage = document.getElementById('preview-modal-image')
+        const preview = modalPreviewCameraId !== null ? document.getElementById(`preview-${modalPreviewCameraId}`) : null
         modal.hidden = true
         modalImage.removeAttribute('src')
+        if (modalMode === 'preview' && preview && modalPreviewCameraId !== null) {
+          preview.src = `/preview-stream/${modalPreviewCameraId}?mode=card&t=${Date.now()}`
+        }
+        modalPreviewCameraId = null
+        modalMode = null
       }
 
       function stopPreviewFromModal() {
