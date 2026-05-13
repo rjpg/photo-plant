@@ -15,13 +15,13 @@
 
       <form method="post" action="{{ url_for('update_config') }}" class="camera-grid">
         {% for camera in cameras %}
-        <section class="camera-card">
+        <section class="camera-card" id="camera-{{ camera.id }}-card">
           <h2>Camera {{ camera.id }}</h2>
 
           {% if camera.latest_capture %}
-          <img class="camera-image" src="{{ url_for('serve_capture', prefix=camera.prefix, filename=camera.latest_capture) }}" alt="Latest capture for camera {{ camera.id }}">
+          <img id="camera-{{ camera.id }}-image" class="camera-image" src="{{ url_for('serve_capture', prefix=camera.prefix, filename=camera.latest_capture) }}" alt="Latest capture for camera {{ camera.id }}" onclick="openCaptureModal({{ camera.id }})">
           {% else %}
-          <div class="camera-placeholder">No capture yet</div>
+          <div id="camera-{{ camera.id }}-placeholder" class="camera-placeholder">No capture yet</div>
           {% endif %}
 
           <label>
@@ -39,7 +39,7 @@
             Enabled
           </label>
 
-          <div class="meta">Sequence: {{ camera.sequence }}</div>
+          <div id="camera-{{ camera.id }}-sequence" class="meta">Sequence: {{ camera.sequence }}</div>
 
           <div class="actions">
             <button type="button" onclick="captureNow({{ camera.id }})">Capture now</button>
@@ -75,6 +75,63 @@
 
     <script>
       let activePreviewCameraId = null
+      let modalMode = null
+      let lastCaptures = {}
+
+      function ensureCameraImage(cameraId) {
+        let imageEl = document.querySelector(`#camera-${cameraId}-image`)
+        if (imageEl) {
+          return imageEl
+        }
+
+        const placeholderEl = document.querySelector(`#camera-${cameraId}-placeholder`)
+        if (!placeholderEl) {
+          return null
+        }
+
+        imageEl = document.createElement('img')
+        imageEl.id = `camera-${cameraId}-image`
+        imageEl.className = 'camera-image'
+        imageEl.alt = `Latest capture for camera ${cameraId}`
+        imageEl.setAttribute('onclick', `openCaptureModal(${cameraId})`)
+        placeholderEl.replaceWith(imageEl)
+        return imageEl
+      }
+
+      // Poll for latest captures every 5 seconds
+      async function pollLatestCaptures() {
+        try {
+          const response = await fetch('/latest-captures')
+          const captures = await response.json()
+          
+          // Update each camera card if there's a new capture
+          for (const cameraId in captures) {
+            const data = captures[cameraId]
+            const sequenceEl = document.querySelector(`#camera-${cameraId}-sequence`)
+            const previous = lastCaptures[cameraId]
+
+            if (sequenceEl) {
+              sequenceEl.textContent = `Sequence: ${data.sequence}`
+            }
+
+            const changed = !previous || previous.sequence !== data.sequence || previous.filename !== data.filename || previous.prefix !== data.prefix
+            if (changed && data.filename) {
+              const imageEl = ensureCameraImage(cameraId)
+              if (imageEl) {
+                imageEl.src = `/captures/${data.prefix}/${data.filename}?t=${Date.now()}`
+              }
+            }
+
+            lastCaptures[cameraId] = data
+          }
+        } catch (e) {
+          // Polling error, ignore silently
+        }
+      }
+
+      // Start polling
+      pollLatestCaptures()
+      setInterval(pollLatestCaptures, 5000)
 
       async function captureNow(cameraId) {
         const status = document.getElementById(`status-${cameraId}`)
@@ -194,9 +251,29 @@
         const modal = document.getElementById('preview-modal')
         const modalImage = document.getElementById('preview-modal-image')
         const modalTitle = document.getElementById('preview-modal-title')
+        const stopButton = document.querySelector('.preview-modal-actions button')
         modal.hidden = false
         modalImage.src = preview.src
         modalTitle.textContent = `Camera ${cameraId} preview`
+        stopButton.hidden = false
+        modalMode = 'preview'
+      }
+
+      function openCaptureModal(cameraId) {
+        const captureImage = document.getElementById(`camera-${cameraId}-image`)
+        if (!captureImage || !captureImage.src) {
+          return
+        }
+
+        const modal = document.getElementById('preview-modal')
+        const modalImage = document.getElementById('preview-modal-image')
+        const modalTitle = document.getElementById('preview-modal-title')
+        const stopButton = document.querySelector('.preview-modal-actions button')
+        modal.hidden = false
+        modalImage.src = captureImage.src
+        modalTitle.textContent = `Camera ${cameraId} capture`
+        stopButton.hidden = true
+        modalMode = 'capture'
       }
 
       function closePreviewModal() {
@@ -207,6 +284,11 @@
       }
 
       function stopPreviewFromModal() {
+        if (modalMode !== 'preview') {
+          closePreviewModal()
+          return
+        }
+
         if (activePreviewCameraId === null) {
           closePreviewModal()
           return

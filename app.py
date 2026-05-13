@@ -285,6 +285,22 @@ def health():
     return jsonify({"ok": True})
 
 
+@app.get("/latest-captures")
+def latest_captures():
+    """Return the latest capture info for all cameras"""
+    config = load_config()
+    captures = {}
+    for camera_id in CAMERA_IDS:
+        camera = config["cameras"][str(camera_id)]
+        latest = latest_capture_name(camera["prefix"])
+        captures[str(camera_id)] = {
+            "prefix": camera["prefix"],
+            "filename": latest,
+            "sequence": camera["sequence"],
+        }
+    return jsonify(captures)
+
+
 if __name__ == "__main__":
     ensure_dirs()
     scheduler.start()
