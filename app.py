@@ -24,6 +24,13 @@ CAPTURE_RESOLUTIONS = {
     "640x480": (640, 480),
 }
 DEFAULT_CAPTURE_RESOLUTION = "1920x1080"
+ZOOM_LEVELS = {
+    "1.0x": 1.0,
+    "1.25x": 1.25,
+    "1.5x": 1.5,
+    "2.0x": 2.0,
+}
+DEFAULT_ZOOM_LEVEL = "1.0x"
 PREVIEW_CARD_WIDTH = 640
 PREVIEW_CARD_HEIGHT = 480
 PREVIEW_MODAL_WIDTH = 960
@@ -37,6 +44,7 @@ class CameraConfig:
     enabled: bool = False
     sequence: int = 0
     capture_resolution: str = DEFAULT_CAPTURE_RESOLUTION
+    zoom_level: str = DEFAULT_ZOOM_LEVEL
 
 
 def ensure_dirs() -> None:
@@ -120,7 +128,26 @@ def normalize_capture_resolution(value: str | None) -> str:
     return value if value in CAPTURE_RESOLUTIONS else DEFAULT_CAPTURE_RESOLUTION
 
 
-def capture_image(camera_id: int, output_path: Path, width: int, height: int) -> subprocess.CompletedProcess:
+def normalize_zoom_level(value: str | None) -> str:
+    return value if value in ZOOM_LEVELS else DEFAULT_ZOOM_LEVEL
+
+
+def roi_for_zoom(zoom_level: str | None) -> str | None:
+    zoom = ZOOM_LEVELS[normalize_zoom_level(zoom_level)]
+    if zoom <= 1:
+        return None
+    size = 1 / zoom
+    offset = (1 - size) / 2
+    return f"{offset:.6f},{offset:.6f},{size:.6f},{size:.6f}"
+
+
+def add_roi_argument(cmd: list[str], zoom_level: str | None) -> None:
+    roi = roi_for_zoom(zoom_level)
+    if roi:
+        cmd.extend(["--roi", roi])
+
+
+def capture_image(camera_id: int, output_path: Path, width: int, height: int, zoom_level: str | None = None) -> subprocess.CompletedProcess:
     cmd = [
         "rpicam-still",
         "--camera",
@@ -135,6 +162,7 @@ def capture_image(camera_id: int, output_path: Path, width: int, height: int) ->
         "-o",
         str(output_path),
     ]
+    add_roi_argument(cmd, zoom_level)
     return subprocess.run(cmd, capture_output=True, text=True)
 
 
@@ -146,7 +174,7 @@ def capture_preview(camera_id: int) -> tuple[bool, str | None]:
     return True, None
 
 
-def preview_stream_frames(camera_id: int, width: int, height: int):
+def preview_stream_frames(camera_id: int, width: int, height: int, zoom_level: str | None):
     cmd = [
         "rpicam-vid",
         "--camera",
@@ -163,6 +191,7 @@ def preview_stream_frames(camera_id: int, width: int, height: int):
         "--output",
         "-",
     ]
+    add_roi_argument(cmd, zoom_level)
     process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     buffer = b""
 
@@ -210,7 +239,7 @@ def capture_sequence(camera_id: int, config: dict) -> tuple[bool, str | None, st
     output_path = capture_directory(camera["prefix"]) / filename
     resolution = normalize_capture_resolution(camera.get("capture_resolution"))
     width, height = CAPTURE_RESOLUTIONS[resolution]
-    result = capture_image(camera_id, output_path, width, height)
+    result = capture_image(camera_id, output_path, width, height, camera.get("zoom_level"))
     if result.returncode != 0:
         camera["sequence"] -= 1
         error_msg = result.stderr or result.stdout or f"rpicam-still exited with code {result.returncode}"
@@ -285,6 +314,7 @@ def index():
                 "enabled": camera["enabled"],
                 "sequence": camera["sequence"],
                 "capture_resolution": normalize_capture_resolution(camera.get("capture_resolution")),
+                "zoom_level": normalize_zoom_level(camera.get("zoom_level")),
                 "latest_capture": latest_capture_name(camera["prefix"]),
             }
         )
@@ -292,6 +322,7 @@ def index():
         "index.html",
         cameras=cameras,
         capture_resolutions=list(CAPTURE_RESOLUTIONS.keys()),
+        zoom_levels=list(ZOOM_LEVELS.keys()),
     )
 
 
@@ -304,10 +335,12 @@ def update_config():
         interval = request.form.get(f"interval_{camera_id}", "10").strip()
         enabled = request.form.get(f"enabled_{camera_id}") == "on"
         capture_resolution = request.form.get(f"capture_resolution_{camera_id}", DEFAULT_CAPTURE_RESOLUTION)
+        zoom_level = request.form.get(f"zoom_level_{camera_id}", DEFAULT_ZOOM_LEVEL)
         config["cameras"][key]["prefix"] = prefix
         config["cameras"][key]["interval_minutes"] = parse_interval_minutes(interval)
         config["cameras"][key]["enabled"] = enabled
         config["cameras"][key]["capture_resolution"] = normalize_capture_resolution(capture_resolution)
+        config["cameras"][key]["zoom_level"] = normalize_zoom_level(zoom_level)
     config["config_revision"] = int(config.get("config_revision", 0)) + 1
     save_config(config)
     return redirect(url_for("index"))
@@ -336,6 +369,8 @@ def preview(camera_id: int):
 
 @app.get("/preview-stream/<int:camera_id>")
 def preview_stream(camera_id: int):
+    config = load_config()
+    camera = config["cameras"][str(camera_id)]
     mode = request.args.get("mode", "card")
     if mode == "modal":
         width = PREVIEW_MODAL_WIDTH
@@ -345,7 +380,7 @@ def preview_stream(camera_id: int):
         height = PREVIEW_CARD_HEIGHT
 
     return Response(
-        preview_stream_frames(camera_id, width, height),
+        preview_stream_frames(camera_id, width, height, camera.get("zoom_level")),
         mimetype="multipart/x-mixed-replace; boundary=frame",
     )
 
@@ -380,6 +415,7 @@ def latest_captures():
             "enabled": camera["enabled"],
             "interval_minutes": camera["interval_minutes"],
             "capture_resolution": normalize_capture_resolution(camera.get("capture_resolution")),
+            "zoom_level": normalize_zoom_level(camera.get("zoom_level")),
         }
     return jsonify({
         "config_revision": int(config.get("config_revision", 0)),

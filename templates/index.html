@@ -42,6 +42,15 @@
             </select>
           </label>
 
+          <label class="field-row">
+            <span>Zoom</span>
+            <select name="zoom_level_{{ camera.id }}">
+              {% for zoom_level in zoom_levels %}
+              <option value="{{ zoom_level }}" {% if camera.zoom_level == zoom_level %}selected{% endif %}>{{ zoom_level }}</option>
+              {% endfor %}
+            </select>
+          </label>
+
           <div id="camera-{{ camera.id }}-sequence" class="meta">Sequence: {{ camera.sequence }}</div>
 
           <div class="actions">
@@ -121,6 +130,7 @@
             const intervalInput = document.querySelector(`input[name="interval_${cameraId}"]`)
             const enabledInput = document.querySelector(`input[name="enabled_${cameraId}"]`)
             const resolutionInput = document.querySelector(`select[name="capture_resolution_${cameraId}"]`)
+            const zoomInput = document.querySelector(`select[name="zoom_level_${cameraId}"]`)
 
             if (configRevisionChanged) {
               if (prefixInput) {
@@ -134,6 +144,9 @@
               }
               if (resolutionInput) {
                 resolutionInput.value = data.capture_resolution
+              }
+              if (zoomInput) {
+                zoomInput.value = data.zoom_level
               }
             }
 
@@ -172,9 +185,11 @@
           const interval = document.querySelector(`input[name="interval_${id}"]`).value
           const enabled = document.querySelector(`input[name="enabled_${id}"]`).checked
           const captureResolution = document.querySelector(`select[name="capture_resolution_${id}"]`).value
+          const zoomLevel = document.querySelector(`select[name="zoom_level_${id}"]`).value
           formData.append(`prefix_${id}`, prefix)
           formData.append(`interval_${id}`, interval)
           formData.append(`capture_resolution_${id}`, captureResolution)
+          formData.append(`zoom_level_${id}`, zoomLevel)
           if (enabled) {
             formData.append(`enabled_${id}`, 'on')
           }
