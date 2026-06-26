@@ -30,3 +30,6 @@ http://<raspberry-ip>:5000
 - This project assumes the Raspberry Pi camera mux is already configured in `/boot/firmware/config.txt`
 - Camera capture uses `rpicam-still --camera <index>`
 - Captures are stored in `data/captures/cam0` through `data/captures/cam3`
+
+
+<img width="1600" height="801" alt="WhatsApp Image 2026-05-12 at 02 16 00" src="https://github.com/user-attachments/assets/44aaa7f5-e7d6-422c-849a-dd67e2618b95" />
